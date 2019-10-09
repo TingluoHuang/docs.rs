@@ -47,6 +47,19 @@ Vagrant.configure("2") do |config|
     apt-get update
     apt-get install -y --no-install-recommends cmake curl cmake gcc g++ git libmagic-dev libssl-dev pkg-config
 
+
+    ############################################################
+    # Installing docker                                        #
+    ############################################################
+    apt-get install -y --no-install-recommends apt-transport-https ca-certificates curl gnupg2 software-properties-common
+    curl -fsSL https://download.docker.com/linux/debian/gpg | sudo apt-key add -
+    add-apt-repository \
+       "deb [arch=amd64] https://download.docker.com/linux/debian \
+       $(lsb_release -cs) stable"
+    apt-get update
+    apt-get install -y --no-install-recommends docker-ce
+    usermod -a -G docker cratesfyi
+
     ############################################################
     # Installing rustc into cratesfyi-container                #
     ############################################################
