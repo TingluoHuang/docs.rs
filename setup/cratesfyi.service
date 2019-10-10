@@ -1,0 +1,15 @@
+[Unit]
+Description=Cratesfyi daemon
+After=network.target postgresql.service
+
+[Service]
+User=cratesfyi
+Group=cratesfyi
+Type=forking
+PIDFile=/cratesfyi-prefix/cratesfyi.pid
+EnvironmentFile=/home/cratesfyi/.cratesfyi.env
+ExecStart=/home/cratesfyi/docs.rs/target/release/cratesfyi daemon
+WorkingDirectory=/home/cratesfyi/docs.rs
+
+[Install]
+WantedBy=multi-user.target
