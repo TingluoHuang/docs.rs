@@ -1,5 +1,4 @@
 
-use Metadata;
 use utils::MetadataPackage;
 use docbuilder::BuildResult;
 use regex::Regex;
@@ -38,7 +37,6 @@ pub(crate) fn add_package_into_database(conn: &Connection,
     let readme = get_readme(metadata_pkg, source_dir).unwrap_or(None);
     let (release_time, yanked, downloads) = get_release_time_yanked_downloads(metadata_pkg)?;
     let is_library = metadata_pkg.is_library();
-    let metadata = Metadata::from_source_dir(source_dir)?;
 
     let release_id: i32 = {
         let rows = conn.query("SELECT id FROM releases WHERE crate_id = $1 AND version = $2",
@@ -83,7 +81,7 @@ pub(crate) fn add_package_into_database(conn: &Connection,
                                          &is_library,
                                          &res.rustc_version,
                                          &metadata_pkg.documentation,
-                                         &metadata.default_target])?;
+                                         &res.target])?;
             // return id
             rows.get(0).get(0)
 
@@ -137,7 +135,7 @@ pub(crate) fn add_package_into_database(conn: &Connection,
                               &is_library,
                               &res.rustc_version,
                               &metadata_pkg.documentation,
-                              &metadata.default_target])?;
+                              &res.target])?;
             rows.get(0).get(0)
         }
     };
