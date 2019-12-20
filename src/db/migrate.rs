@@ -213,6 +213,18 @@ pub fn migrate(version: Option<Version>) -> CratesfyiResult<()> {
             // downgrade query
             "ALTER TABLE releases ALTER COLUMN target_name DROP NOT NULL",
         ),
+        migration!(
+            // version
+            6,
+            // description
+            "Make default_target non-nullable",
+            // upgrade query
+            "UPDATE releases SET default_target = 'x86_64-unknown-linux-gnu' where default_target IS NULL;
+             ALTER TABLE releases ALTER COLUMN default_target SET NOT NULL",
+            // downgrade query
+            "ALTER TABLE releases ALTER COLUMN default_target DROP NOT NULL;
+             ALTER TABLE releases ALTER COLUMN default_target DROP DEFAULT",
+        ),
     ];
 
     for migration in migrations {
