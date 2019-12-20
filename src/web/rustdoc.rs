@@ -243,6 +243,13 @@ pub fn rustdoc_html_server_handler(req: &mut Request) -> IronResult<Response> {
     if !path.ends_with(".html") {
         return Ok(file.serve());
     }
+    // if visiting the full path to the default target, remove the target from the path
+    let crate_details = cexpect!(CrateDetails::new(&conn, &name, &version));
+    if req_path[3] == crate_details.metadata.default_target {
+        let canonical = Url::parse(&req_path[..2].join("/"))
+            .expect("got an invalid URL to start");
+        return Ok(super::redirect(canonical));
+    }
 
     let mut content = RustdocPage::default();
 
@@ -261,7 +268,6 @@ pub fn rustdoc_html_server_handler(req: &mut Request) -> IronResult<Response> {
     content.body_class = body_class;
 
     content.full = file_content;
-    let crate_details = cexpect!(CrateDetails::new(&conn, &name, &version));
     let (path, version) = if let Some(version) = latest_version(&crate_details.versions, &version) {
         req_path[2] = &version;
         (path_for_version(&req_path, &crate_details.target_name, &conn), version)

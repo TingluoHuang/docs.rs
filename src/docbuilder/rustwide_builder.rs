@@ -309,6 +309,7 @@ impl RustwideBuilder {
                         true,
                     )?;
 
+                    successful_targets.push(res.target.clone());
                     if in_target {
                         // Then build the documentation for all the targets
                         for target in &metadata.extra_targets {
@@ -458,7 +459,7 @@ impl RustwideBuilder {
             docsrs_version: format!("docsrs {}", ::BUILD_VERSION),
             successful,
             cargo_metadata,
-            target: target.unwrap_or_default().to_string(),
+            target: target.unwrap_or("x86_64-unknown-linux-gnu").to_string(),
         })
     }
 

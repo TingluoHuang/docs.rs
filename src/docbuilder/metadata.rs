@@ -179,7 +179,7 @@ mod test {
 
         assert_eq!(metadata.default_target.unwrap(), "x86_64-unknown-linux-gnu".to_owned());
 
-        let extra_targets = metadata.extra_targets.unwrap();
+        let extra_targets = metadata.extra_targets;
         assert_eq!(extra_targets.len(), 2);
         assert_eq!(extra_targets[0], "x86_64-apple-darwin".to_owned());
         assert_eq!(extra_targets[1], "x86_64-pc-windows-msvc".to_owned());
