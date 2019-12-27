@@ -26,7 +26,6 @@ static TARGETS: &[&str] = &[
     "x86_64-pc-windows-msvc",
     "x86_64-unknown-linux-gnu",
 ];
-static DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
 
 static ESSENTIAL_FILES_VERSIONED: &[&str] = &[
     "brush.svg",
@@ -74,8 +73,12 @@ impl RustwideBuilder {
         let is_docker = std::env::var("DOCS_RS_DOCKER")
             .map(|s| s == "true")
             .unwrap_or(false);
+        let fast_init = std::env::var("DOCS_RS_FAST_INIT")
+            .map(|s| s == "true")
+            .unwrap_or(false);
         let workspace = WorkspaceBuilder::new(Path::new(workspace_path), USER_AGENT)
             .running_inside_docker(is_docker)
+            .fast_init(fast_init)
             .init()?;
         workspace.purge_all_build_dirs()?;
 
@@ -94,7 +97,7 @@ impl RustwideBuilder {
         })
     }
 
-    fn update_toolchain(&mut self) -> Result<()> {
+    pub fn update_toolchain(&mut self) -> Result<()> {
         // Ignore errors if detection fails.
         let old_version = self.detect_rustc_version().ok();
 
@@ -267,7 +270,7 @@ impl RustwideBuilder {
             .build(&self.toolchain, &krate, sandbox)
             .run(|build| {
                 let mut files_list = None;
-                let mut has_docs = false;
+                let (mut has_docs, mut in_target) = (false, false);
                 let mut successful_targets = Vec::new();
 
                 // Do an initial build and then copy the sources in the database
@@ -281,12 +284,23 @@ impl RustwideBuilder {
                         build.host_source_dir(),
                     )?);
 
-                    has_docs = build
-                        .host_target_dir()
-                        .join(&res.target)
-                        .join("doc")
-                        .join(name.replace("-", "_"))
-                        .is_dir();
+                    if let Some(name) = res.cargo_metadata.root().library_name() {
+                        let host_target = build.host_target_dir();
+                        if host_target
+                            .join(&res.target)
+                            .join("doc")
+                            .join(&name)
+                            .is_dir()
+                        {
+                            has_docs = true;
+                            in_target = true;
+                        // hack for proc-macro documentation:
+                        // it really should be in target/$target/doc,
+                        // but rustdoc has a bug and puts it in target/doc
+                        } else if host_target.join("doc").join(name).is_dir() {
+                            has_docs = true;
+                        }
+                    }
                 }
 
                 if has_docs {
@@ -294,34 +308,23 @@ impl RustwideBuilder {
                     self.copy_docs(
                         &build.host_target_dir(),
                         local_storage.path(),
-                        &res.target,
+                        if in_target { &res.target } else { "" },
                         true,
                     )?;
 
-                    // Then build the documentation for all the targets
-                    for target in TARGETS {
-                        debug!("building package {} {} for {}", name, version, target);
-                        let target_res = self.execute_build(Some(target), &build, &limits)?;
-                        if target_res.successful {
-                            // Cargo is not giving any error and not generating documentation of some crates
-                            // when we use a target compile options. Check documentation exists before
-                            // adding target to successfully_targets.
-                            if build.host_target_dir().join(target).join("doc").is_dir() {
-                                debug!(
-                                    "adding documentation for target {} to the database",
-                                    target
-                                );
-                                self.copy_docs(
-                                    &build.host_target_dir(),
-                                    local_storage.path(),
-                                    target,
-                                    false,
-                                )?;
-                                successful_targets.push(target.to_string());
-                            }
+                    if in_target {
+                        // Then build the documentation for all the targets
+                        for target in TARGETS {
+                            debug!("building package {} {} for {}", name, version, target);
+                            self.build_target(
+                                target,
+                                &build,
+                                &limits,
+                                &local_storage.path(),
+                                &mut successful_targets,
+                            )?;
                         }
                     }
-
                     self.upload_docs(&conn, name, version, local_storage.path())?;
                 }
 
@@ -355,6 +358,28 @@ impl RustwideBuilder {
         Ok(res.successful)
     }
 
+    fn build_target(
+        &self,
+        target: &str,
+        build: &Build,
+        limits: &Limits,
+        local_storage: &Path,
+        successful_targets: &mut Vec<String>,
+    ) -> Result<()> {
+        let target_res = self.execute_build(Some(target), build, limits)?;
+        if target_res.successful {
+            // Cargo is not giving any error and not generating documentation of some crates
+            // when we use a target compile options. Check documentation exists before
+            // adding target to successfully_targets.
+            if build.host_target_dir().join(target).join("doc").is_dir() {
+                debug!("adding documentation for target {} to the database", target,);
+                self.copy_docs(&build.host_target_dir(), local_storage, target, false)?;
+                successful_targets.push(target.to_string());
+            }
+        }
+        Ok(())
+    }
+
     fn execute_build(
         &self,
         target: Option<&str>,
@@ -365,14 +390,7 @@ impl RustwideBuilder {
         let cargo_metadata =
             CargoMetadata::load(&self.workspace, &self.toolchain, &build.host_source_dir())?;
 
-        let target = if let Some(target) = target {
-            target
-        } else if let Some(target) = metadata.default_target.as_ref().map(|s| s.as_str()) {
-            target
-        } else {
-            DEFAULT_TARGET
-        }
-        .to_string();
+        let target = target.or_else(|| metadata.default_target.as_ref().map(|s| s.as_str()));
 
         let mut rustdoc_flags: Vec<String> = vec![
             "-Z".to_string(),
@@ -381,7 +399,6 @@ impl RustwideBuilder {
             format!("-{}", parse_rustc_version(&self.rustc_version)?),
             "--static-root-path".to_string(),
             "/".to_string(),
-            "--disable-per-crate-search".to_string(),
         ];
         for dep in &cargo_metadata.root_dependencies() {
             rustdoc_flags.push("--extern-html-root-url".to_string());
@@ -395,13 +412,11 @@ impl RustwideBuilder {
         if let Some(package_rustdoc_args) = &metadata.rustdoc_args {
             rustdoc_flags.append(&mut package_rustdoc_args.iter().map(|s| s.to_owned()).collect());
         }
-        let mut cargo_args = vec![
-            "doc".to_owned(),
-            "--lib".to_owned(),
-            "--no-deps".to_owned(),
-            "--target".to_owned(),
-            target.to_owned(),
-        ];
+        let mut cargo_args = vec!["doc".to_owned(), "--lib".to_owned(), "--no-deps".to_owned()];
+        if let Some(explicit_target) = target {
+            cargo_args.push("--target".to_owned());
+            cargo_args.push(explicit_target.to_owned());
+        };
         if let Some(features) = &metadata.features {
             cargo_args.push("--features".to_owned());
             cargo_args.push(features.join(" "));
@@ -425,8 +440,9 @@ impl RustwideBuilder {
                     "RUSTFLAGS",
                     metadata
                         .rustc_args
+                        .as_ref()
                         .map(|args| args.join(" "))
-                        .unwrap_or("".to_owned()),
+                        .unwrap_or_default(),
                 )
                 .env("RUSTDOCFLAGS", rustdoc_flags.join(" "))
                 .args(&cargo_args)
@@ -440,7 +456,7 @@ impl RustwideBuilder {
             docsrs_version: format!("docsrs {}", ::BUILD_VERSION),
             successful,
             cargo_metadata,
-            target: target.to_string(),
+            target: target.unwrap_or_default().to_string(),
         })
     }
 
